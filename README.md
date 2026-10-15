@@ -1,4 +1,88 @@
-# LAS Recomp
+# NSMBUD-Recomp
+
+An experimental fork of [LAS Recomp](https://github.com/peiikai/LASRecomp) building an
+ARM32/AArch32 foundation for a future native PC port of **New Super Mario Bros. U Deluxe**.
+Development starts with small, reproducible recompilation milestones while preserving the
+existing AArch64 path used by *The Legend of Zelda: Link's Awakening*.
+
+> [!NOTE]
+> **Current milestone: synthetic ARM/A32 and Thumb interworking programs.** This fork does not yet run
+> *New Super Mario Bros. U Deluxe*. No NSMB U Deluxe game version, executable, graphics or
+> gameplay has been validated. All ARM32 fixtures are original synthetic programs, with no
+> commercial game files required or included.
+
+## ARM32 development in this fork
+
+The first milestone loads a synthetic ARM32 NSO, translates its explicitly marked code to C,
+compiles it and executes it on the host. It exercises guest calls and returns, ELF32
+relocations, memory access and a real synthetic five-argument HLE function. The demo returns
+the expected result, `r0=22`.
+
+| Area | Changes implemented |
+| --- | --- |
+| Guest architecture | Explicit guest ISA selection, independent of the PC's architecture; NPDM metadata checks and rejection of contradictory declarations. |
+| Game profile | Separate `generic` ARM32 profile; Link's Awakening offsets, patches and HLE behavior are not applied to it. |
+| Recompiler | Separate A32 backend for a subset of integer, logical, shift, comparison, memory and control-flow instructions, including conditions and defined NZCV flags. |
+| Thumb extension | Opt-in 16/32-bit Thumb subset, CPSR.T/IT state and BX/BLX interworking, tested with original mixed-state programs. |
+| Loader | Bounded Python and C loaders for uncompressed synthetic NSO segments, ELF32 symbols and supported ARM REL/RELA relocations. |
+| Runtime | Separate 32-bit CPU state, checked guest-to-host memory translation, instruction dispatch and a synthetic AAPCS32 HLE interface. |
+| Diagnostics | Unsupported instructions and ARM/Thumb transitions, unknown services and invalid memory accesses fail explicitly with useful diagnostics. |
+| AArch64 path | Existing LAS workflow retained; legacy loaders reject ARM32 NPDM metadata before interpreting modules as ELF64. SIMD test harness compatibility and output checks repaired. |
+
+Code lives in [`tools/arm32/`](tools/arm32/), [`tools/gen_arm32.py`](tools/gen_arm32.py),
+[`tools/guest_arch.py`](tools/guest_arch.py) and [`runtime/arm32/`](runtime/arm32/).
+See [the ARM32 development notes](docs/arm32.md) for exact instruction coverage, format
+restrictions, ABI details, validation commands and remaining blockers.
+
+### Run the synthetic milestone
+
+From the repository root, with a native C compiler, Make and the existing `tools/venv`
+Python environment containing Capstone 5.x:
+
+```sh
+make arm32-demo
+make arm32-test
+make thumb-demo
+make thumb-test
+```
+
+These targets do not install dependencies. The tests use an already installed Unicorn for
+reference comparisons; that comparison is explicitly skipped if Unicorn is unavailable.
+Cloud environment activation and the equivalent compiler commands are in [docs/arm32.md](docs/arm32.md#reproduce-the-milestone).
+
+### Validation and next steps
+
+The first milestone was validated on Linux x86-64:
+
+- 12 ARM32 tests passed, including 371 instruction encodings and 5,936 fixed-seed cases
+  compared against Unicorn for registers, defined flags and memory.
+- The demo passed with GCC AddressSanitizer and UBSan; both REL and RELA fixtures executed.
+- The existing AArch64 SIMD suite passed 4,096 cases across 512 encodings. The LAS application
+  compiled and rendered its initial screen under software Vulkan.
+- The second milestone adds 1,584 Thumb instruction cases, 3,360 IT combinations and 64
+  conditional BX/BLX interworking cases, all compared with Unicorn.
+- The CommonCrypto blocker in `tools/test_lift.py` is resolved on Linux using the already
+  installed OpenSSL EVP MD5. Its 45 scalar AArch64 cases now pass; macOS retains CommonCrypto.
+
+The screen test used the **native Linux x86-64 LAS host launcher**, not guest AArch64 or
+ARM32 game execution. No NSMB U Deluxe files were used. The mixed ARM/Thumb demo returns
+`r0=20`; the original A32 demo still returns `r0=22`.
+
+See [milestone 2](docs/arm32-milestone2.md) for commands, tested instruction coverage,
+platform limitations and recovery instructions for both milestones.
+
+Next milestones are to inspect authorized NSMB U Deluxe NPDM/modules and version/build IDs,
+validate real ARM32 module layouts and linking, and specify Horizon's AArch32 SVC/TLS,
+thread and callback interfaces. Broader Thumb/T32 coverage, VFP/NEON and other instruction
+families remain pending. Rendering and full game execution are future work; synthetic test results do not
+establish game compatibility.
+
+## LAS Recomp upstream
+
+The following documentation describes the inherited **Link's Awakening** application.
+Its screenshots, game-file requirements, features and platform support apply to LAS Recomp.
+Discord and upstream issue links below belong to that project. Its original AI-development
+notice, credits and licenses are retained here.
 
 > [!IMPORTANT]
 > **This project was made almost exclusively with AI.** Nearly all of the code, tooling, reverse engineering and
@@ -29,10 +113,10 @@ native Windows, macOS and Linux application.
 
 ![The start screen: choose vanilla or a randomizer seed, set up your game files, settings](docs/start_screen.jpg)
 
-## Project Discord
+## LAS Recomp Discord
 https://discord.gg/DhrgdYqdcY
 
-## Status
+## LAS Recomp status
 
 This is a beta release. That means bugs are likely, crashes could occur, randomizer seeds could possibly be unsolvable (dungeon room shuffle modes are especially experimental at this point) and some graphics issues remain (especially in wide and ultrawide aspect ratios). This is a work in progress, hence the beta designation. To report a bug or a possible randomizer logic issue, use either the [Discord](https://discord.gg/DhrgdYqdcY) or a [GitHub issue](https://github.com/peiikai/LASRecomp/issues) - see [CONTRIBUTING.md](CONTRIBUTING.md#reporting-bugs) for what to include.
 
@@ -46,7 +130,7 @@ This is a beta release. That means bugs are likely, crashes could occur, randomi
 - Checking the dresser in BowWow's mom's room causes the game to crash.
 - Clicking Title Screen in LAS Recomp's custom settings crashes.
 
-## Features
+## LAS Recomp features
 
 **Runs natively**
 - **This is not emulation.** Runs natively on Windows, macOS and Linux using static recompilation of the Switch code.
@@ -112,7 +196,10 @@ This is a beta release. That means bugs are likely, crashes could occur, randomi
   what you have keys for and which trade items you still hold.
 - Built-in check tracker on the overworld map (optional).
 
-## Building from source
+## Building LAS Recomp from source
+
+For this fork's synthetic ARM32 workflow, use the targets described above and
+[docs/arm32.md](docs/arm32.md). The following steps build the existing Link's Awakening application.
 
 Every platform needs your own v1.0.0 game files: build first, then use the start screen's game-file setup.
 `make gen` then recompiles the game code from your own game files into `generated/`, and `make` builds it into its own
@@ -212,7 +299,8 @@ none of their files are used):
 ## Legal
 
 LAS Recomp is a fan project. It is not affiliated with, endorsed by or sponsored by Nintendo. *The Legend of Zelda*
-and *Link's Awakening* are trademarks of Nintendo. No game files, game code, assets or fonts are included - not in
+and *Link's Awakening* are trademarks of Nintendo. This experimental fork is also unaffiliated with Nintendo;
+*New Super Mario Bros. U Deluxe* is a Nintendo trademark. No game files, game code, assets or fonts are included - not in
 this repository and not in release builds. You must provide your own legally obtained copy of the game files to play.
 
 ## License

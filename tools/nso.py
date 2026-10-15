@@ -1,7 +1,9 @@
 """NSO loader: decompress segments, build the memory image, parse MOD0/dynamic info."""
 import struct
 import sys
+from pathlib import Path
 import lz4.block
+from guest_arch import select_arch
 
 DT_NULL, DT_NEEDED, DT_PLTRELSZ, DT_HASH, DT_STRTAB, DT_SYMTAB, DT_RELA, DT_RELASZ = 0, 1, 2, 4, 5, 6, 7, 8
 DT_STRSZ, DT_JMPREL, DT_RELACOUNT = 10, 23, 0x6FFFFFF9
@@ -9,8 +11,13 @@ R_AARCH64_ABS64, R_AARCH64_GLOB_DAT, R_AARCH64_JUMP_SLOT, R_AARCH64_RELATIVE = 2
 
 
 class Nso:
-    def __init__(self, path):
-        raw = open(path, 'rb').read()
+    def __init__(self, path, guest_arch='aarch64', npdm=None):
+        # NSO0 identifies a container, not its instruction set. This reader remains ELF64-only.
+        sibling = Path(path).parent / 'main.npdm'
+        metadata = npdm if npdm is not None else (sibling if sibling.is_file() else None)
+        if select_arch(guest_arch, metadata) != 'aarch64':
+            raise ValueError('legacy NSO reader requires AArch64; use gen_arm32.py for synthetic A32')
+        raw = Path(path).read_bytes()
         assert raw[:4] == b'NSO0', path
         flags = struct.unpack_from('<I', raw, 0xC)[0]
         self.build_id = raw[0x40:0x60].rstrip(b'\0').hex()
