@@ -333,3 +333,18 @@ arm32-test:
 	$(PY) tools/test_arm32.py -v
 
 .PHONY: arm32-demo arm32-test
+
+# Opt-in Thumb/interworking milestone; default arm32-demo remains the original A32 fixture.
+thumb-demo:
+	@mkdir -p $(B)/thumb
+	$(PY) tools/arm32/fixtures.py $(B)/thumb --thumb
+	$(PY) tools/gen_arm32.py $(B)/thumb/synthetic.nso $(B)/thumb/program.c --base 0x10000 \
+	    --guest-arch arm32 --npdm $(B)/thumb/main.npdm --game-profile generic --thumb
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Iruntime runtime/arm32/core.c runtime/arm32/loader.c \
+	    tools/arm32/runner.c $(B)/thumb/program.c -o $(B)/thumb/runner
+	$(B)/thumb/runner --guest-arch arm32 --game-profile generic $(B)/thumb/synthetic.nso 0x10000 0x20
+
+thumb-test:
+	$(PY) tools/test_thumb.py -v
+
+.PHONY: thumb-demo thumb-test

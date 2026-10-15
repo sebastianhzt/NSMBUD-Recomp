@@ -1,5 +1,10 @@
 # Experimental ARM32/A32 milestone
 
+This page records milestone 1 and its original A32-only commands/results. The opt-in
+Thumb/interworking extension, resolved Linux scalar-test blocker and precise host-launcher
+scope are documented in [milestone 2](arm32-milestone2.md). Historical limitations below
+describe the first milestone; consult that page for the current delta and recovery archive.
+
 This is an isolated experimental backend, not NSMB U Deluxe compatibility. The checkout
 was on branch `work`, commit `6244eb9d4d3497094e21cac7dabe998ded1f2800`, with no tracked
 changes before this work. No game files were available or used, so no game's build ID,

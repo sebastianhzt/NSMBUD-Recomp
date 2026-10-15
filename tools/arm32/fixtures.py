@@ -72,6 +72,69 @@ def npdm(path, arch):
     Path(path).write_bytes(raw)
 
 
+def thumb_wide(rd, immediate, top=False):
+    return struct.pack('<HH', (0xF2C0 if top else 0xF240) | (immediate >> 12 & 15) | (immediate >> 11 & 1) << 10,
+                       (immediate >> 8 & 7) << 12 | rd << 8 | (immediate & 255))
+
+
+def thumb_call(pc, target, exchange=False):
+    origin = (pc + 4) & ~3 if exchange else pc + 4
+    delta = target - origin
+    if delta % (4 if exchange else 2) or not -(1 << 24) <= delta < (1 << 24):
+        raise ValueError('unencodable synthetic Thumb call')
+    imm = delta & 0x1ffffff
+    s, i1, i2 = imm >> 24 & 1, imm >> 23 & 1, imm >> 22 & 1
+    return struct.pack('<HH', 0xf000 | s << 10 | (imm >> 12 & 1023),
+                       (0xc000 if exchange else 0xd000) | ((~(i1 ^ s)) & 1) << 13 |
+                       ((~(i2 ^ s)) & 1) << 11 | (imm >> 1 & 2047))
+
+
+def interworking_fixture(path, immediate_exchange=False):
+    """ARM -> Thumb -> Thumb leaf -> ARM leaf -> Thumb -> ARM, all original code.
+
+    MOVW/MOVT and BL are 32-bit Thumb instructions; IT predicates a then/else pair.
+    The expected result is 10+1+2+4+3 = 20; checked memory also holds 0x56781234.
+    """
+    raw = fixture(path)
+    put = lambda at, word: struct.pack_into('<I', raw, 0x100 + at, word)
+    program = [0xE52DE008, 0xE3A00005]
+    for rd, data_offset in ((6, 0x800), (7, 0x808), (3, 0x80C)):
+        at = 0x20 + len(program) * 4
+        program.append(0xE59F0000 | rd << 12 | (data_offset - at - 8))
+    program += [0xE12FFF37, 0xE2800003, 0xE5860000, 0xE49DE008, 0xE12FFF1E]
+    for i, word in enumerate(program): put(0x20 + i * 4, word)
+    thumb = struct.pack('<6H', 0x4674, 0x2007, 0x2807, 0xBF0C, 0x200A, 0x2063)
+    thumb += thumb_wide(1, 0x1234) + thumb_wide(1, 0x5678, top=True)
+    thumb += struct.pack('<5H', 0x6071, 0x6872, 0x4291, 0xBF08, 0x3001)
+    thumb += thumb_call(0x80 + len(thumb), 0xB0)
+    thumb += thumb_call(0x80 + len(thumb), 0xC0, exchange=True) if immediate_exchange else struct.pack('<H', 0x4798)
+    thumb += struct.pack('<H', 0x4720) # BX r4, returning to the ARM caller
+    raw[0x180:0x180 + len(thumb)] = thumb
+    struct.pack_into('<HH', raw, 0x1B0, 0x3002, 0x4770)
+    put(0xC0, 0xE2800004); put(0xC4, 0xE12FFF1E)
+    symbols = [('', 0, 0, 0, 0), ('_start', 0x12, 1, 0x20, len(program) * 4),
+               ('helper', 0x12, 1, 0x81, len(thumb)), ('$a', 0, 1, 0x20, 0),
+               ('$d', 0, 1, 0x60, 0), ('$t.1', 0, 1, 0x80, 0),
+               ('synthetic_add5', 0x12, 0, 0, 0), ('result', 0x11, 3, 0x810, 4),
+               ('arm_leaf', 0x12, 1, 0xC0, 8), ('$a.arm', 0, 1, 0xC0, 0),
+               ('thumb_leaf', 0x12, 1, 0xB1, 4), ('$t.leaf', 0, 1, 0xB0, 0)]
+    strings = bytearray(b'\0')
+    for i, (name, info, section, value, size) in enumerate(symbols):
+        offset = len(strings) if name else 0
+        if name: strings.extend(name.encode() + b'\0')
+        struct.pack_into('<IIIBBH', raw, 0x600 + i * 16, offset, value, size, info, 0, section)
+    assert len(strings) < 128
+    raw[0x780:0x800] = bytes(128)
+    raw[0x780:0x780 + len(strings)] = strings
+    struct.pack_into('<I', raw, 0x51C, len(strings)) # DT_STRSZ
+    struct.pack_into('<I', raw, 0x804, len(symbols)) # DT_HASH.nchain
+    struct.pack_into('<I', raw, 0x534, 32) # DT_RELSZ
+    struct.pack_into('<II', raw, 0x858, 0x80C, 8 << 8 | 2) # R_ARM_ABS32 arm_leaf
+    put(0x80C, 0)
+    Path(path).write_bytes(raw)
+    return raw
+
+
 def fixture64(directory):
     """A small original AArch64 NSO for the existing loader and test_lift.py regression."""
     directory = Path(directory)
@@ -107,9 +170,11 @@ if __name__ == '__main__':
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument('directory')
+    ap.add_argument('--thumb', action='store_true')
     args = ap.parse_args()
     out = Path(args.directory)
     out.mkdir(parents=True, exist_ok=True)
     fixture(out / 'synthetic.nso')
+    if args.thumb: interworking_fixture(out / 'synthetic.nso')
     npdm(out / 'main.npdm', 'arm32')
-    print(f'Original A32 fixtures written to {out}')
+    print(f'Original {"ARM/Thumb" if args.thumb else "A32"} fixtures written to {out}')

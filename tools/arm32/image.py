@@ -1,7 +1,7 @@
 """Bounded NSO/ELF32 reader for the synthetic A32 milestone, not a game compatibility claim.
 
 The supported subset uses uncompressed NSO segments, ELF32 dynamic symbols and REL/RELA
-R_ARM_ABS32/R_ARM_RELATIVE. ARM mapping symbols explicitly distinguish code and literal data.
+R_ARM_ABS32/R_ARM_RELATIVE. Mapping symbols distinguish ARM, opt-in Thumb and literal data.
 """
 import struct
 from pathlib import Path
@@ -101,6 +101,10 @@ class Image32:
         return struct.unpack_from('<I', self.image, offset)[0]
 
     def code_words(self, base):
+        return {pc: int.from_bytes(data, 'little') for pc, (mode, data) in self.code_instructions(base).items()}
+
+    def code_instructions(self, base, allow_thumb=False):
+        from .thumb import instruction_size
         if base < 0 or base % 0x1000 or base + self.size > 0xF0000000:
             raise ValueError('ARM32 base must be page aligned and fit below reserved HLE addresses')
         mappings = sorted((v, n[:2]) for n, _, s, v, _ in self.syms
@@ -110,28 +114,41 @@ class Image32:
         funcs = [(n, v, z) for n, info, s, v, z in self.syms if s and info & 15 == 2 and z]
         if not funcs:
             raise ValueError('bounded ELF32 function symbols and ARM mapping symbols required')
-        words = {}
-        for name, start, size in funcs:
-            if start & 1:
+        instructions = {}
+        for name, tagged_start, size in funcs:
+            if tagged_start & 1 and not allow_thumb:
                 raise ValueError(f'Thumb function {name} is unsupported')
-            if start % 4 or size % 4 or start < self.text[0] or start + size > sum(self.text):
+            start = tagged_start & ~1
+            if start % 2 or size % 2 or start < self.text[0] or start + size > sum(self.text):
                 raise ValueError(f'function outside aligned text: {name}')
-            state = None
-            for at in range(start, start + size, 4):
-                for point, mode in mappings:
-                    if point <= at:
-                        state = mode
+            at = start
+            while at < start + size:
+                state = next((mode for point, mode in reversed(mappings) if point <= at), None)
                 if state == '$t':
-                    raise ValueError(f'Thumb mapping at 0x{base + at:08x} is unsupported')
+                    if not allow_thumb:
+                        raise ValueError(f'Thumb mapping at 0x{base + at:08x} is unsupported')
+                    width = instruction_size(int.from_bytes(self.image[at:at + 2], 'little'))
+                else:
+                    width = 4 if state == '$a' else 2
                 if state is None:
                     raise ValueError(f'missing ARM/data mapping at 0x{base + at:08x}')
-                if state == '$a':
-                    words[base + at] = self.u32(at)
-        return words
+                if at == start and state == '$d':
+                    raise ValueError(f'function entry is mapped as data: {name}')
+                if at == start and (state == '$t') != bool(tagged_start & 1):
+                    raise ValueError(f'function entry mode contradicts mapping: {name}')
+                if state != '$d':
+                    if (state == '$a' and at % 4) or at + width > start + size or any(at < p < at + width for p, _ in mappings):
+                        raise ValueError(f'truncated/misaligned instruction or mapping at 0x{base + at:08x}')
+                    item = (state, bytes(self.image[at:at + width]))
+                    if base + at in instructions and instructions[base + at] != item:
+                        raise ValueError('contradictory overlapping instruction mappings')
+                    instructions[base + at] = item
+                at += width
+        return instructions
 
-    def relocated(self, base, imports):
+    def relocated(self, base, imports, allow_thumb=False):
         """Python reference for the C loader; addresses remain uint32, never host pointers."""
-        self.code_words(base)
+        self.code_instructions(base, allow_thumb)
         out = bytearray(self.image)
         for target, typ, sym, add in self.relocs:
             if typ == 23:

@@ -38,7 +38,7 @@ class Lifter32:
             body.append(f'uint32_t target = {reg(rm)};')
             if ins.id == A.ARM_INS_BLX:
                 body.append(f'c->r[14] = 0x{(pc + 4) & 0xFFFFFFFF:08x}u;')
-            body.append('return a32_branch(c, target);')
+            body.append('return a32_exchange(c, target);')
             branch = True
         elif ins.id in (A.ARM_INS_B, A.ARM_INS_BL) and (word >> 25) & 7 == 5:
             imm = word & 0xffffff

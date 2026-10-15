@@ -6,7 +6,7 @@ Development starts with small, reproducible recompilation milestones while prese
 existing AArch64 path used by *The Legend of Zelda: Link's Awakening*.
 
 > [!NOTE]
-> **Current milestone: synthetic ARM/A32 programs.** This fork does not yet run
+> **Current milestone: synthetic ARM/A32 and Thumb interworking programs.** This fork does not yet run
 > *New Super Mario Bros. U Deluxe*. No NSMB U Deluxe game version, executable, graphics or
 > gameplay has been validated. All ARM32 fixtures are original synthetic programs, with no
 > commercial game files required or included.
@@ -23,9 +23,10 @@ the expected result, `r0=22`.
 | Guest architecture | Explicit guest ISA selection, independent of the PC's architecture; NPDM metadata checks and rejection of contradictory declarations. |
 | Game profile | Separate `generic` ARM32 profile; Link's Awakening offsets, patches and HLE behavior are not applied to it. |
 | Recompiler | Separate A32 backend for a subset of integer, logical, shift, comparison, memory and control-flow instructions, including conditions and defined NZCV flags. |
+| Thumb extension | Opt-in 16/32-bit Thumb subset, CPSR.T/IT state and BX/BLX interworking, tested with original mixed-state programs. |
 | Loader | Bounded Python and C loaders for uncompressed synthetic NSO segments, ELF32 symbols and supported ARM REL/RELA relocations. |
 | Runtime | Separate 32-bit CPU state, checked guest-to-host memory translation, instruction dispatch and a synthetic AAPCS32 HLE interface. |
-| Diagnostics | Unsupported instructions, Thumb transitions, unknown services and invalid memory accesses fail explicitly with useful diagnostics. |
+| Diagnostics | Unsupported instructions and ARM/Thumb transitions, unknown services and invalid memory accesses fail explicitly with useful diagnostics. |
 | AArch64 path | Existing LAS workflow retained; legacy loaders reject ARM32 NPDM metadata before interpreting modules as ELF64. SIMD test harness compatibility and output checks repaired. |
 
 Code lives in [`tools/arm32/`](tools/arm32/), [`tools/gen_arm32.py`](tools/gen_arm32.py),
@@ -41,6 +42,8 @@ Python environment containing Capstone 5.x:
 ```sh
 make arm32-demo
 make arm32-test
+make thumb-demo
+make thumb-test
 ```
 
 These targets do not install dependencies. The tests use an already installed Unicorn for
@@ -56,13 +59,22 @@ The first milestone was validated on Linux x86-64:
 - The demo passed with GCC AddressSanitizer and UBSan; both REL and RELA fixtures executed.
 - The existing AArch64 SIMD suite passed 4,096 cases across 512 encodings. The LAS application
   compiled and rendered its initial screen under software Vulkan.
-- The older scalar `tools/test_lift.py` could not compile on Linux because its harness
-  depends on macOS CommonCrypto; its native comparisons were not executed.
+- The second milestone adds 1,584 Thumb instruction cases, 3,360 IT combinations and 64
+  conditional BX/BLX interworking cases, all compared with Unicorn.
+- The CommonCrypto blocker in `tools/test_lift.py` is resolved on Linux using the already
+  installed OpenSSL EVP MD5. Its 45 scalar AArch64 cases now pass; macOS retains CommonCrypto.
+
+The screen test used the **native Linux x86-64 LAS host launcher**, not guest AArch64 or
+ARM32 game execution. No NSMB U Deluxe files were used. The mixed ARM/Thumb demo returns
+`r0=20`; the original A32 demo still returns `r0=22`.
+
+See [milestone 2](docs/arm32-milestone2.md) for commands, tested instruction coverage,
+platform limitations and recovery instructions for both milestones.
 
 Next milestones are to inspect authorized NSMB U Deluxe NPDM/modules and version/build IDs,
 validate real ARM32 module layouts and linking, and specify Horizon's AArch32 SVC/TLS,
-thread and callback interfaces. Thumb/T32, VFP/NEON and other instruction families remain
-pending. Rendering and full game execution are future work; synthetic test results do not
+thread and callback interfaces. Broader Thumb/T32 coverage, VFP/NEON and other instruction
+families remain pending. Rendering and full game execution are future work; synthetic test results do not
 establish game compatibility.
 
 ## LAS Recomp upstream

@@ -38,9 +38,51 @@ int a32_store(Cpu32 *c, uint32_t address, unsigned width, uint32_t value) {
 }
 
 int a32_branch(Cpu32 *c, uint32_t target) {
-    if (target & 1) return a32_fail(c, "Thumb/T32 interworking is unsupported");
+    if (target & 1) return a32_fail(c, "Thumb target requires BX/BLX interworking");
     if (target & 3) return a32_fail(c, "unaligned A32 branch target");
     c->r[15] = target;
+    return 0;
+}
+
+unsigned t32_itstate(const Cpu32 *c) {
+    return ((c->cpsr >> 25) & 3) | ((c->cpsr >> 8) & 0xfc);
+}
+
+static void set_itstate(Cpu32 *c, unsigned it) {
+    c->cpsr = (c->cpsr & ~0x0600fc00u) | ((it & 3) << 25) | ((it & 0xfc) << 8);
+}
+
+int a32_exchange(Cpu32 *c, uint32_t target) {
+    if (t32_itstate(c)) return a32_fail(c, "interworking with unfinished IT block");
+    if (!(target & 1) && (target & 3)) return a32_fail(c, "unaligned ARM interworking target");
+    c->cpsr = (c->cpsr & ~0x20u) | ((target & 1) << 5);
+    c->r[15] = target & ~1u;
+    return 0;
+}
+
+int t32_branch(Cpu32 *c, uint32_t target) {
+    if (!(c->cpsr & 0x20) || (target & 1)) return a32_fail(c, "unaligned/wrong-state Thumb branch");
+    c->r[15] = target;
+    return 0;
+}
+
+int t32_start_it(Cpu32 *c, unsigned condition, unsigned mask) {
+    if (!(c->cpsr & 0x20) || t32_itstate(c) || condition >= 14 || mask == 0 || mask > 15)
+        return a32_fail(c, "unsupported/nested IT condition or state");
+    set_itstate(c, condition << 4 | mask);
+    return 0;
+}
+
+int t32_predicate(Cpu32 *c, unsigned control, int *execute, int *implicit_flags) {
+    if (!(c->cpsr & 0x20)) return a32_fail(c, "Thumb instruction reached in ARM state");
+    unsigned it = t32_itstate(c);
+    if (it && ((it >> 4) >= 14 || !(it & 15))) return a32_fail(c, "invalid IT state");
+    if (it && control == 2) return a32_fail(c, "conditional branch inside IT is unsupported");
+    if (it && control == 1 && (it & 7))
+        return a32_fail(c, "control flow is unsupported before the last IT slot");
+    *implicit_flags = !it;
+    *execute = !it || a32_condition(c, it >> 4);
+    if (it) set_itstate(c, (it & 7) ? ((it & 0xe0) | ((it << 1) & 31)) : 0);
     return 0;
 }
 
@@ -104,13 +146,14 @@ void a32_logic_flags(Cpu32 *c, uint32_t value, uint32_t carry) {
 }
 
 int a32_run(Cpu32 *c, A32Step step, uint64_t budget) {
-    if (c->cpsr & 0x20) return a32_fail(c, "Thumb/T32 state is unsupported");
-    while (c->r[15] != A32_RETURN) {
-        if (c->cpsr & 0x20) return a32_fail(c, "Thumb/T32 state is unsupported");
+    if (!(c->cpsr & 0x20) && t32_itstate(c)) return a32_fail(c, "IT state in ARM mode");
+    while (c->r[15] != A32_RETURN || (c->cpsr & 0x20)) {
         if (!budget--) return a32_fail(c, "instruction budget exhausted");
         uint32_t pc = c->r[15];
-        if (pc & 3) return a32_fail(c, "unaligned A32 dispatch");
+        if (pc & ((c->cpsr & 0x20) ? 1u : 3u)) return a32_fail(c, "unaligned ARM/Thumb dispatch");
+        if (!(c->cpsr & 0x20) && t32_itstate(c)) return a32_fail(c, "IT state in ARM mode");
         if (pc >= A32_HLE_BASE && pc < A32_RETURN) {
+            if ((c->cpsr & 0x20) || t32_itstate(c)) return a32_fail(c, "synthetic HLE requires ARM entry outside IT");
             size_t index = (pc - A32_HLE_BASE) / 16;
             if ((pc - A32_HLE_BASE) % 16 || index >= c->nimports || !c->imports[index].fn)
                 return a32_fail(c, "unknown synthetic HLE service");
@@ -124,7 +167,7 @@ int a32_run(Cpu32 *c, A32Step step, uint64_t budget) {
             }
             if (memcmp(preserved, c->r + 4, 8 * sizeof(uint32_t)) || preserved[8] != c->r[13] || preserved[9] != c->r[14])
                 return a32_fail(c, "synthetic HLE violated preserved registers/SP/LR");
-            if (a32_branch(c, c->r[14])) return -1;
+            if (a32_exchange(c, c->r[14])) return -1;
         } else if (step(c)) return -1;
     }
     return 0;
