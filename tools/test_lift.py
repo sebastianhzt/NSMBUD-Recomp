@@ -157,8 +157,10 @@ def main():
         f.write(f'int ntests = {len(picks)};\n')
     harness = os.path.join(ROOT, 'tools', 'test_harness.c')
     exe = os.path.join(work, 'harness')
-    subprocess.check_call(['clang', '-O1', '-Wno-deprecated-declarations', '-fno-strict-aliasing', '-I', os.path.join(ROOT, 'runtime'),
-                           '-o', exe, harness, os.path.join(work, 'tests.c')])
+    subprocess.check_call([os.environ.get('CC', 'clang'), '-O1', '-Wno-deprecated-declarations', '-fno-strict-aliasing', '-I', os.path.join(ROOT, 'runtime'),
+                           '-o', exe, harness, os.path.join(work, 'tests.c')]
+                          + ([] if sys.platform == 'darwin' else ['-lcrypto'])
+                          + (['-lm'] if sys.platform.startswith('linux') else []))
 
     mu = uc.Uc(uc.UC_ARCH_ARM64, uc.UC_MODE_ARM)
     mu.mem_map(base, len(n.image))
@@ -204,12 +206,17 @@ def main():
                           hex(base)], capture_output=True)
     if out.returncode:
         print('harness failed', out.returncode, out.stderr.decode()[-2000:])
-    lines = out.stdout.decode().split('\n')
+        return 1
+    lines = out.stdout.decode().splitlines()
+    if not cases or len(lines) != len(cases):
+        print(f'incomplete execution: {len(lines)} output records for {len(cases)} cases')
+        return 1
     fails = {}
     for (k, pc, x, sp, nzcv, v), (ex, esp, enz, ev, epc, eh), line in zip(cases, expect, lines):
         parts = line.split()
-        if len(parts) < 37:
-            continue
+        if len(parts) != 67:
+            print(f'malformed harness record: {len(parts)} fields, expected 67')
+            return 1
         hx_, hsp, hnz, hpc = [int(p, 16) for p in parts[:31]], int(parts[31], 16), int(parts[32], 16), int(parts[33], 16)
         hh = parts[34]
         hv = [int(p, 16) for p in parts[35:67]]
@@ -231,14 +238,15 @@ def main():
         if diffs:
             w = picks[k][0]
             fails.setdefault(w, (pc, diffs[:4]))
-    print(f'tested {len(picks)} encodings, {len(cases)} cases, {len(lines) - 1} ran, failing encodings: {len(fails)}')
+    print(f'tested {len(picks)} encodings, {len(cases)} cases, {len(lines)} ran, failing encodings: {len(fails)}')
     print('unsupported:', unsupported)
     import capstone
     md = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
     for w, (pc, d) in list(fails.items())[:40]:
         dis = next(md.disasm(struct.pack('<I', w), pc), None)
         print(f'  {w:08x} {dis.mnemonic + " " + dis.op_str if dis else "?":40} {"; ".join(d)}')
+    return 1 if fails else 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
