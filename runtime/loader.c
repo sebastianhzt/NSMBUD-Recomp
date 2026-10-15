@@ -174,6 +174,16 @@ static void relocate(Module *m) {
 
 void loader_load(const char *exefs) {
     char path[1024];
+    // This loader and the LAS runtime are AArch64-only. Never parse A32 tables as Elf64.
+    snprintf(path, sizeof path, "%s/main.npdm", exefs);
+    FILE *meta_file = fopen(path, "rb");
+    if (meta_file) {
+        uint8_t meta[0x80];
+        size_t got = fread(meta, 1, sizeof meta, meta_file);
+        fclose(meta_file);
+        if (got != sizeof meta || memcmp(meta, "META", 4)) FATAL("malformed NPDM: %s\n", path);
+        if (!(meta[0xc] & 1)) FATAL("ARM32 NPDM cannot use the AArch64/LAS runtime; use the experimental A32 runner\n");
+    }
     static const struct { const char *name; uint64_t base; } mods[] = {{"main", MAIN_BASE}, {"sdk", SDK_BASE}};
     for (unsigned i = 0; i < 2; i++) {
         Module *m = &g_modules[g_nmodules++];

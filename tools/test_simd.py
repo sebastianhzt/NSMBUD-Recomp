@@ -293,7 +293,7 @@ def compile_tests(work, bodies, jobs, cflags):
         if p.wait():
             raise SystemExit('compile failed')
     exe = os.path.join(work, 'harness.exe' if os.name == 'nt' else 'harness')
-    subprocess.check_call([cc, '-o', exe] + objs)
+    subprocess.check_call([cc, '-o', exe] + objs + (['-lm'] if sys.platform.startswith('linux') else []))
     return exe
 
 
@@ -418,7 +418,11 @@ def main():
                        capture_output=True)
     if p.returncode:
         print('harness failed', p.returncode, p.stderr.decode()[-2000:])
+        return 1
     data = open(outp, 'rb').read()
+    if not cases or len(data) != len(cases) * OUT_SIZE:
+        print(f'incomplete harness output: {len(data)} bytes for {len(cases)} expected cases')
+        return 1
     print(f'harness: {len(data) // OUT_SIZE} cases ({time.time() - t3:.0f}s)')
     fails = {}
     nfail = 0

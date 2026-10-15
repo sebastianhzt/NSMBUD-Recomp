@@ -496,6 +496,10 @@ def main():
     ap.add_argument('base', type=lambda s: int(s, 0))
     ap.add_argument('outdir')
     ap.add_argument('--hle')
+    ap.add_argument('--guest-arch', choices=('aarch64',), default='aarch64',
+                    help='guest ISA, independent of host ARCH; experimental A32 uses gen_arm32.py')
+    ap.add_argument('--game-profile', choices=('las',), default='las', help='legacy LAS patches only')
+    ap.add_argument('--npdm', help='validate guest ISA against NPDM META flags')
     ap.add_argument('--chunk', type=int, default=1500)  # functions per file at most
     ap.add_argument('--chunk-bytes', type=int, default=1500000)  # and about this much C (even compile times)
     ap.add_argument('--big-fn', type=int, default=100000)  # bytes of C from which a function gets its own file
@@ -503,6 +507,9 @@ def main():
     ap.add_argument('--simd', choices=('asm', 'c'),
                     default='asm' if platform.machine().lower() in ('arm64', 'aarch64') else 'c')
     args = ap.parse_args()
+
+    from guest_arch import select_arch
+    select_arch(args.guest_arch, args.npdm)
 
     t0 = time.time()
     m = Module(args.name, args.nso, args.base, args.simd)

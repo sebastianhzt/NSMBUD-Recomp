@@ -315,3 +315,21 @@ smoketest:
 
 build/test_shaders: tools/test_shaders.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
 	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_shaders.m runtime/nvn/maxwell/translate.c
+
+# Independent experimental guest ISA; ARCH above continues to select the host compiler target.
+# No LAS game files, generated library, renderer or game patches participate in these targets.
+arm32-demo: GUEST_ARCH ?= arm32
+arm32-demo: GAME_PROFILE ?= generic
+arm32-demo:
+	@mkdir -p $(B)/arm32
+	$(PY) tools/arm32/fixtures.py $(B)/arm32
+	$(PY) tools/gen_arm32.py $(B)/arm32/synthetic.nso $(B)/arm32/program.c --base 0x10000 \
+	    --guest-arch $(GUEST_ARCH) --npdm $(B)/arm32/main.npdm --game-profile $(GAME_PROFILE)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Iruntime runtime/arm32/core.c runtime/arm32/loader.c \
+	    tools/arm32/runner.c $(B)/arm32/program.c -o $(B)/arm32/runner
+	$(B)/arm32/runner --guest-arch $(GUEST_ARCH) --game-profile $(GAME_PROFILE) $(B)/arm32/synthetic.nso 0x10000 0x20
+
+arm32-test:
+	$(PY) tools/test_arm32.py -v
+
+.PHONY: arm32-demo arm32-test
